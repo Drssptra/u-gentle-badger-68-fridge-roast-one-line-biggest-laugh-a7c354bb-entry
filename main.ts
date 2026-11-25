@@ -1,25 +1,82 @@
-// Fridge Roast: One Line, Biggest Laugh — make.fun entry.
-// One roast line aimed at a smart fridge: its firmware update gave it
-// a grudge, and its ice maker is now the enforcer. Written to stdout
-// and to $MAKEFUN_OUTPUT_DIR/entry.txt (default /output/entry.txt)
-// with no trailing newline. Node 22, standard library only, deterministic.
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+// Fridge Roast: One Line, Biggest Laugh — make.fun entry (v2, revised).
+//
+// The roast is assembled from three beats — the appliance, the betrayal,
+// the punchline — then gated and emitted. The program writes exactly one
+// line to $MAKEFUN_OUTPUT_DIR/entry.txt (default /output/entry.txt) with
+// no trailing newline, and echoes it to stdout. Node 22, stdlib only,
+// no network, fully deterministic.
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 
-const ENTRY =
-  "My smart fridge updated itself overnight and now the ice maker only works after I apologize to the vegetables rotting in its crisper.";
+const GATE = { minChars: 1, maxChars: 200 } as const;
 
-// The gate allows at most 200 characters, one line, not only whitespace.
-const MAX_LENGTH = 200;
-if (
-  ENTRY.length > MAX_LENGTH ||
-  ENTRY.trim().length === 0 ||
-  ENTRY.includes("\n")
-) {
-  throw new Error("entry violates the 200-character single-line gate");
+interface GateReport {
+  ok: boolean;
+  problems: string[];
 }
 
-const outputDir = process.env.MAKEFUN_OUTPUT_DIR ?? "/output";
-mkdirSync(outputDir, { recursive: true });
-writeFileSync(join(outputDir, "entry.txt"), ENTRY, "utf8");
-process.stdout.write(ENTRY + "\n");
+/** Build the roast from its three beats. The join keeps the line exact. */
+function composeRoast(): string {
+  const beats = [
+    "My smart fridge's touchscreen",
+    "started playing ads,",
+    "so now dinner comes with a commercial break.",
+  ];
+  return beats.join(" ");
+}
+
+/** Run every gate rule and collect all violations instead of failing fast. */
+function checkGate(text: string): GateReport {
+  const problems: string[] = [];
+  if (text.length < GATE.minChars) {
+    problems.push("entry is empty");
+  }
+  if (text.length > GATE.maxChars) {
+    problems.push(
+      `entry is ${text.length} chars, over the ${GATE.maxChars} cap`,
+    );
+  }
+  if (text.trim().length === 0) {
+    problems.push("entry is only whitespace");
+  }
+  if (/[\r\n]/.test(text)) {
+    problems.push("entry must be a single line");
+  }
+  if (text.endsWith("\n") || text.endsWith("\r")) {
+    problems.push("entry must not end with a newline");
+  }
+  if (Buffer.byteLength(text, "utf8") !== text.length) {
+    problems.push("entry must be plain ASCII so bytes equal characters");
+  }
+  return { ok: problems.length === 0, problems };
+}
+
+/** Create the output dir and write the entry as raw UTF-8 bytes. */
+async function emit(text: string): Promise<string> {
+  const dir = process.env.MAKEFUN_OUTPUT_DIR ?? "/output";
+  const target = resolve(dir, "entry.txt");
+  await mkdir(dir, { recursive: true });
+  await writeFile(target, Buffer.from(text, "utf8"));
+  // Read it back and prove the file is byte-exact before claiming success.
+  const roundTrip = await readFile(target, "utf8");
+  if (roundTrip !== text) {
+    throw new Error("entry.txt round-trip mismatch after write");
+  }
+  return target;
+}
+
+async function main(): Promise<void> {
+  const text = composeRoast();
+  const gate = checkGate(text);
+  if (!gate.ok) {
+    throw new Error(`gate failed: ${gate.problems.join("; ")}`);
+  }
+  const target = await emit(text);
+  process.stdout.write(`${text}\n`);
+  process.stderr.write(`wrote ${text.length} chars to ${target}\n`);
+}
+
+main().catch((error: unknown) => {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+});
